@@ -57,6 +57,7 @@ DTDataIntegrityTask.checkUros      = True
 # Digi task
 from DQM.DTMonitorModule.dtDigiTask_cfi import *
 from DQM.DTMonitorClient.dtOccupancyTest_cfi import *
+from DQM.DTMonitorClient.dtOccupancyTestML_cfi import *
 dtDigiMonitor.readDB = False 
 dtDigiMonitor.filterSyncNoise = True
 dtDigiMonitor.lookForSyncNoise = True
@@ -112,10 +113,10 @@ unpackers = cms.Sequence(dtunpacker + twinMuxStage2Digis + scalersRawToDigi)
 reco = cms.Sequence(dt1DRecHits + dt4DSegments)
 
 # sequence of DQM tasks to be run on physics events only
-dtDQMTask = cms.Sequence(DTDataIntegrityTask + dtDigiMonitor + dtSegmentAnalysisMonitor + dtTriggerBaseMonitor + dtTriggerLutMonitor + dtNoiseMonitor + dtResolutionAnalysisMonitor)
+dtDQMTask = cms.Sequence(dtDigiMonitor + dtSegmentAnalysisMonitor + dtTriggerBaseMonitor + dtTriggerLutMonitor + dtNoiseMonitor + dtResolutionAnalysisMonitor)
 
 # DQM clients to be run on physics event only
-dtDQMTest = cms.Sequence(dataIntegrityTest + blockedROChannelTest + triggerLutTest + triggerTest + dtOccupancyTest + segmentTest + dtNoiseAnalysisMonitor + dtSummaryClients + dtqTester)
+dtDQMTest = cms.Sequence(dataIntegrityTest + blockedROChannelTest + triggerLutTest + triggerTest + dtOccupancyTest + dtOccupancyTestML + segmentTest + dtNoiseAnalysisMonitor + dtSummaryClients + dtqTester)
 
 # DQM tasks and clients to be run on calibration events only
 dtDQMCalib = cms.Sequence(dtTPmonitor + dtTPTriggerMonitor + dtTPmonitorTest + dtTPTriggerTest)
