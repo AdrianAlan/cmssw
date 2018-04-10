@@ -17,6 +17,7 @@
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include <FWCore/Framework/interface/EDAnalyzer.h>
 #include <FWCore/Framework/interface/ESHandle.h>
+#include "FWCore/ParameterSet/interface/FileInPath.h"
 #include "DQMServices/Core/interface/MonitorElement.h"
 #include <DataFormats/MuonDetId/interface/DTLayerId.h>
 
@@ -72,7 +73,9 @@ private:
   // Run the test on the occupancy histos
   int runOccupancyTest(TH2F *histo, const DTChamberId& chId, float& chamberPercentage, tensorflow::GraphDef *graphDef, tensorflow::Session *session);
 
-  std::string topFolder() const;
+  std::vector<float> interpolateLayers(std::vector<float> const& inputs, int size, int targetSize);
+
+  std::string topFolder(bool isBooking) const;
 
   int nevents;
 

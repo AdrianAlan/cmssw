@@ -19,6 +19,7 @@
 #include "DQMServices/Core/interface/DQMStore.h"
 #include "DQMServices/Core/interface/MonitorElement.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
+#include "FWCore/ParameterSet/interface/FileInPath.h"
 
 #include "TMath.h"
 
@@ -85,7 +86,7 @@ void DTOccupancyTestML::beginRun(const edm::Run& run, const EventSetup& context)
     bookHistos(ibooker,wh, string("MLDTOccupancies"), "MLOccupancySummary");
     }
 
-  ibooker.setCurrentFolder(topFolder());
+  ibooker.setCurrentFolder(topFolder(true));
   string title = "Occupancy Summary";
   if(tpMode) {
     title = "Test Pulse Occupancy Summary";
@@ -132,11 +133,11 @@ void DTOccupancyTestML::beginRun(const edm::Run& run, const EventSetup& context)
   // Get all the DT chambers
   vector<const DTChamber*> chambers = muonGeom->chambers();
 
-  // Define path and load a graph
-  std::string PATH = "/afs/cern.ch/user/a/adpol/Projects/DT-Digi-Occupancy/model-new/constantgraph.pb";
-  tensorflow::GraphDef* graphDef = tensorflow::loadGraphDef(PATH);
+  // Load graph
+  edm::FileInPath modelFilePath("DQM/DTMonitorClient/models/occupancy_cnn_v1.pb");
+  tensorflow::GraphDef* graphDef = tensorflow::loadGraphDef(modelFilePath.fullPath());
 
-  // Create a session
+  // Create session
   tensorflow::Session* session = tensorflow::createSession(graphDef);
 
   for(vector<const DTChamber*>::const_iterator chamber = chambers.begin();
@@ -148,7 +149,7 @@ void DTOccupancyTestML::beginRun(const edm::Run& run, const EventSetup& context)
     // Run the tests on the plot for the various granularities
     if(chamberOccupancyHisto != 0) {
       // Get the 2D histo
-      TH2F* histo = chamberOccupancyHisto->getTH2F();
+      TH2F *histo = chamberOccupancyHisto->getTH2F();
 
       float chamberPercentage = 1.;
       int result = runOccupancyTest(histo, chId, chamberPercentage, graphDef, session);
@@ -230,7 +231,7 @@ void DTOccupancyTestML::bookHistos(DQMStore::IBooker & ibooker, const int wheelI
   // Set the current folder
   stringstream wheel; wheel << wheelId;	
 
-  ibooker.setCurrentFolder(topFolder());
+  ibooker.setCurrentFolder(topFolder(true));
 
   // build the histo name
   string histoName = histoTag + "_W" + wheel.str(); 
@@ -241,7 +242,7 @@ void DTOccupancyTestML::bookHistos(DQMStore::IBooker & ibooker, const int wheelI
 							<< " (tag "
 							<< histoTag
 							<< ") in: "
-							<< topFolder() + "Wheel"+ wheel.str() + "/" + folder << endl;
+							<< topFolder(true) + "Wheel"+ wheel.str() + "/" + folder << endl;
   
   string histoTitle = "Occupancy summary WHEEL: "+wheel.str();
   if(tpMode) {
@@ -265,12 +266,10 @@ string DTOccupancyTestML::getMEName(string histoTag, const DTChamberId& chId) {
   stringstream sector; sector << chId.sector();
 
 
-  string folderRoot = topFolder() + "Wheel" + wheel.str() +
+  string folderRoot = topFolder(false) + "Wheel" + wheel.str() +
     "/Sector" + sector.str() +
     "/Station" + station.str() + "/";
 
-  string folder = "OccupanciesML/";
-  
   // build the histo name
   string histoName = histoTag 
     + "_W" + wheel.str() 
@@ -303,6 +302,7 @@ int DTOccupancyTestML::runOccupancyTest(TH2F *histo, const DTChamberId& chId,
                                         float& chamberPercentage,
                                         tensorflow::GraphDef *graphDef,
                                         tensorflow::Session *session) {
+
   LogTrace("DTDQM|DTMonitorClient|DTOccupancyTestML")
            << "--- Occupancy test for chamber: " << chId << endl;
 
@@ -334,23 +334,10 @@ int DTOccupancyTestML::runOccupancyTest(TH2F *histo, const DTChamberId& chId,
         channelId++;
       }
 
-      // Reshape layers with linear interpolation
       int targetSize = 47;
-      int interpolationFloor = 0;
-      float interpolationPoint = 0.;
-      float step = static_cast<float>(nWires) / targetSize;
-      std::vector<float> reshapedLayerOccupancy(targetSize);
-
-      for (int i = 0; i < targetSize; i++) {
-        interpolationFloor = static_cast<int>(std::floor(interpolationPoint));
-        // Interpolating here
-        reshapedLayerOccupancy.at(i) = (interpolationPoint -
-          interpolationFloor) *
-          (layerOccupancy[interpolationFloor + 1] -
-          layerOccupancy[interpolationFloor]) +
-          layerOccupancy[interpolationFloor];
-        interpolationPoint = step + interpolationPoint;
-      }
+      std::vector<float> reshapedLayerOccupancy = interpolateLayers(layerOccupancy,
+                                                                    nWires,
+                                                                    targetSize);
 
       // Scale occupancy
       float maxOccupancyInLayer =
@@ -371,15 +358,11 @@ int DTOccupancyTestML::runOccupancyTest(TH2F *histo, const DTChamberId& chId,
       tensorflow::run(session, { { "input_cnn_input", input } },
                       { "output_cnn/Softmax" }, &outputs);
 
-      // ToDo: Cut next line:
-      std::cout << "Scaled 1st: " << input.matrix<float>()(0, 0)
-                << "; Score: " << outputs[0].matrix<float>()(0, 0)
-                << ", " << outputs[0].matrix<float>()(0, 1)
-                << "; Max: " << maxOccupancyInLayer <<std::endl;
-
       totalLayers++;
-      int isBad = (outputs[0].matrix<float>()(0, 0) <
-                   outputs[0].matrix<float>()(0, 1));
+
+      bool isBad = (outputs[0].matrix<float>()(0, 0) <
+                    outputs[0].matrix<float>()(0, 1));
+
       if (isBad) badLayers++;
     }
   }
@@ -393,8 +376,26 @@ int DTOccupancyTestML::runOccupancyTest(TH2F *histo, const DTChamberId& chId,
   return 0;  // All good
 }
 
+std::vector<float> DTOccupancyTestML::interpolateLayers(std::vector<float> const& inputs, int size, int targetSize) {
+  // Reshape layers with linear interpolation
+  int interpolationFloor = 0;
+  float interpolationPoint = 0.;
+  float step = static_cast<float>(size) / targetSize;
+  std::vector<float> reshapedInput(targetSize);
 
-string DTOccupancyTestML::topFolder() const {
+  for (int i = 0; i < targetSize; i++) {
+    interpolationFloor = static_cast<int>(std::floor(interpolationPoint));
+    // Interpolating here
+    reshapedInput.at(i) = (interpolationPoint - interpolationFloor) *
+     (inputs[interpolationFloor + 1] - inputs[interpolationFloor]) +
+     inputs[interpolationFloor];
+    interpolationPoint = step + interpolationPoint;
+  }
+  return reshapedInput;
+}
+
+string DTOccupancyTestML::topFolder(bool isBooking) const {
   if(tpMode) return string("DT/10-TestPulses/");
+  if(isBooking) return string("DT/01-Digi/ML");
   return string("DT/01-Digi/");
 }
